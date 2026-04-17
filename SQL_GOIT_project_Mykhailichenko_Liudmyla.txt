@@ -1,0 +1,73 @@
+--Підготовуємо користувачів (users), приводимо поле signup_datetime до єдиного формату дати і називаємо його signup_ts--
+       with users_parced as (
+    select
+        u.user_id,
+        u.signup_datetime,
+        u.promo_signup_flag,
+        CASE
+          WHEN regexp_replace(signup_datetime, '[./]', '-', 'g')
+               ~ '^\d{1,2}-\d{1,2}-\d{2} ' THEN
+              to_timestamp(
+                  regexp_replace(
+                      regexp_replace(signup_datetime, '[./]', '-', 'g'),
+                      '^(\d{1,2})-(\d{1,2})-(\d{2}) ',
+                      '\1-\2-20\3 '
+                  ),
+                  'DD-MM-YYYY HH24:MI'
+              )
+          ELSE
+              to_timestamp(
+                  regexp_replace(signup_datetime, '[./]', '-', 'g'),
+                  'DD-MM-YYYY HH24:MI'
+              )
+      END AS signup_ts
+    from cohort_users_raw u
+),
+--Визначаємо події (events), приводимо поле event_datetime до єдиного формату дати і називаємо його event_ts--
+event_parced as (
+select e.user_id,
+       e.event_type,
+       e.event_datetime,       
+          CASE
+          WHEN regexp_replace(event_datetime, '[./]', '-', 'g')
+               ~ '^\d{1,2}-\d{1,2}-\d{2} ' THEN
+              to_timestamp(
+                  regexp_replace(
+                      regexp_replace(event_datetime, '[./]', '-', 'g'),
+                      '^(\d{1,2})-(\d{1,2})-(\d{2}) ',
+                      '\1-\2-20\3 '
+                  ),
+                  'DD-MM-YYYY HH24:MI'
+              )
+          ELSE
+              to_timestamp(
+                  regexp_replace(event_datetime, '[./]', '-', 'g'),
+                  'DD-MM-YYYY HH24:MI'
+              )
+      END AS event_ts     
+     from cohort_events_raw e
+     ),
+     --обєднуємо користувачів і події, розраховуємо когорти та стаж користувача month_offset--
+     user_activity as (
+     select u.user_id,
+            u.promo_signup_flag,
+       DATE_TRUNC('month', u.signup_ts)::date AS cohort_month,
+       DATE_TRUNC('month', e.event_ts)::date AS activity_month,
+EXTRACT(MONTH  FROM age( date_trunc('month', e.event_ts), date_trunc('month', u.signup_ts))) AS month_offset
+      from users_parced u
+      join event_parced e
+      on u.user_id = e.user_id
+      --фільтруємо дані--
+      where u.signup_ts is not null and
+            e.event_ts is not null and
+            e.event_type is not null and
+            e.event_type not like 'test_event'
+  )
+  select promo_signup_flag,
+         cohort_month,
+         month_offset,
+         count(distinct user_id) as users_total
+  from user_activity
+  where activity_month between '2025-01-01'and '2025-06-01'
+  group by 1, 2, 3
+  order by 1, 2, 3;
